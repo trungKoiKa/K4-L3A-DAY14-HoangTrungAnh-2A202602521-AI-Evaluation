@@ -1,333 +1,98 @@
-# Day 14 — Exercises
+# Day 14 — Exercises: AI Evaluation & Benchmarking
 
-## AI Evaluation & Benchmarking · Lab Worksheet
+## Exercise 1.1 — Metric thresholds
 
-**Thời gian làm bài:** 14:15–17:00
-
-**Domain:** OrbitTech Store Customer Support
-
-Điền trực tiếp câu trả lời vào file này. Golden dataset 20 QA được viết một lần
-duy nhất trong `golden_dataset.json`, không chép lại toàn bộ vào Markdown.
-
----
-
-Từ 14:15–14:30, cài môi trường và chạy baseline tests theo `guide_lab.md`.
-
----
-
-## Part 1 — Warm-up (14:30–14:45)
-
-### Exercise 1.1 — RAGAS Metric Thresholds
-
-Theo bài giảng:
-
-- 0.8–1.0: Good — monitor, maintain.
-- 0.6–0.8: Needs work — analyze failures, iterate.
-- Dưới 0.6: Significant issues — investigate.
-
-Với từng metric, xác định khi nào score thấp có thể chấp nhận và khi nào là
-critical.
-
-| Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
+| Metric | Acceptable low-score scenario | Critical low-score scenario | Required action |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | A concise safe refusal intentionally omits irrelevant retrieved detail | An answer asserts policy facts unsupported by context | Block release; inspect retrieval and grounding prompt |
+| Answer relevance | The question is vague and the answer asks one focused clarification | A direct support question receives unrelated content | Improve intent routing and prompt instructions |
+| Context recall | The reference includes a minor detail that is not needed for the user action | A required policy condition or exception was not retrieved | Expand retrieval/chunk coverage and add the case to regression |
+| Context precision | Extra context is harmless but appears after evidence | Noise ranks above key evidence and distracts generation | Tune ranking or rerank results |
+| Completeness | The user explicitly requests a short answer and the omitted detail is optional | The answer omits a deadline, fee, safety action, or eligibility condition | Add response checklist and multi-hop evidence |
 
-### Exercise 1.2 — Bias trong LLM-as-a-Judge
+## Exercise 1.2 — LLM-as-a-Judge bias
 
-Ba bias thường gặp:
+**Position-bias experiment.** Use the same question and two answers with known human labels. Condition A presents answer X first; condition B reverses the order. Randomize answer labels and run multiple trials. Compare the score difference for the same answer across positions; a consistent advantage for the first position indicates position bias.
 
-- Position bias: judge ưu tiên answer xuất hiện trước.
-- Verbosity bias: judge ưu tiên answer dài hơn.
-- Self-preference: judge ưu tiên output giống chính model đó.
+**Reducing verbosity bias.** Score correctness, completeness, evidence, safety, and actionability separately; explicitly state that unsupported detail and unnecessary length do not earn points. Set a concise-answer expectation and show short, high-scoring examples.
 
-**Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
+**Why calibrate against human labels.** Calibration tests whether the judge agrees with domain experts, exposes systematic leniency or severity, and gives a defensible threshold before the judge becomes a release gate.
 
-> *Câu trả lời:*
+## Exercise 1.3 — CI/CD gate
 
-**Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
-
-> *Câu trả lời:*
-
-**Câu 3: Tại sao cần calibrate LLM judge với human labels?**
-
-> *Câu trả lời:*
-
-### Exercise 1.3 — Evaluation trong CI/CD
-
-**Câu 1: Chọn threshold để block deployment.**
-
-| Metric | Threshold | Lý do |
+| Metric | Threshold | Reason |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | 0.70 | Unsupported policy advice can harm customers. |
+| Answer relevance | 0.70 | The assistant must solve the stated support need. |
+| Completeness | 0.70 | Material policy conditions, safety steps, and deadlines must not be omitted. |
 
-**Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
+Use offline evaluation on every prompt, retrieval, or model change; use online evaluation for sampled production traces and user feedback; require human review for safety/privacy cases, unclear policy interpretation, and any failed quality gate.
 
-> *Câu trả lời:*
+## Exercise 3.1 — Golden dataset
 
----
+| Item | Result |
+|---|---:|
+| Total records | 20 / 20 |
+| Easy | 5 / 5 |
+| Medium | 7 / 7 |
+| Hard | 5 / 5 |
+| Adversarial | 3 / 3 |
+| Source documents used | 10 / 10 |
 
-## Part 2 — Core Coding (14:45–15:40)
+The dataset uses verbatim evidence from the corpus, has unique questions, and validates successfully with `python validate_golden_dataset.py`.
 
-Hoàn thiện các TODO bắt buộc trong `template.py`.
+## Exercise 3.2 — Real benchmark
 
-### Task 1 — Data Models
+The RAG system was run on all 20 cases using `gpt-4o-mini`; raw answers are in `artifacts/actual_answers.json` and the full result table is in `artifacts/benchmark_results.json`.
 
-- `QAPair`: question, expected answer, gold context, metadata và retrieved contexts.
-- `EvalResult`: answer-side scores, optional retrieval scores, pass/failure fields.
-- `overall_score()`: trung bình Faithfulness, Relevance và Completeness.
+| Aggregate metric | Result |
+|---|---:|
+| Overall pass rate | 70.0% (14/20) |
+| Avg Context Recall | 0.840 |
+| Avg Context Precision | 0.922 |
+| Avg Faithfulness | 0.597 |
+| Avg Relevance | 0.753 |
+| Avg Completeness | 0.728 |
+| Failure distribution | hallucination: 4; off_topic: 2 |
 
-### Task 2 — RAGASEvaluator
+Lowest-scoring cases:
 
-Answer-side:
+1. M04 — 0.257 — hallucination
+2. A01 — 0.267 — hallucination
+3. A02 — 0.449 — hallucination
 
-- `evaluate_faithfulness(answer, context)`
-- `evaluate_relevance(answer, question)`
-- `evaluate_completeness(answer, expected)`
+Interpretation: retrieval ranking is strong, while answer grounding is below the deployment threshold. The first remediation priority is grounding and safety-response behavior, not retrieval precision.
 
-Retrieval-side:
+## Exercise 3.3 — OrbitTech LLM-as-a-Judge rubric
 
-- `evaluate_context_recall(contexts, expected)`
-- `evaluate_context_precision(contexts, expected)`
-
-Full pipeline:
-
-- `run_full_eval(..., contexts=None)` luôn tính ba answer metrics.
-- Nếu có `contexts`, tính và lưu thêm Context Recall và Context Precision.
-- Retrieval scores không làm thay đổi `overall_score()` và pass rule gốc.
-
-### Task 3 — LLMJudge
-
-- `score_response(question, answer, rubric)`
-- `detect_bias(scores_batch)`
-
-### Task 4 — BenchmarkRunner
-
-- `run(qa_pairs, agent_fn, evaluator)`
-- `generate_report(results)`
-- `run_regression(new_results, baseline_results)`
-- `identify_failures(results, threshold)`
-
-`BenchmarkRunner.run()` phải truyền `pair.retrieved_contexts` vào
-`run_full_eval()`. Report phải có average của hai retrieval metrics.
-
-### Task 5 — FailureAnalyzer
-
-- `categorize_failures(failures)`
-- `find_root_cause(failure)`
-- `generate_improvement_suggestions(failures)`
-- `generate_improvement_log(failures, suggestions)`
-
-Kiểm tra:
-
-```bash
-pytest tests/ -v
-```
-
-`rerank_by_overlap()` là TODO bonus của Exercise 3.5. Test tương ứng được skip
-nếu bạn chưa làm bonus.
-
----
-
-## Part 3 — Golden Dataset & Real Benchmark (15:40–16:35)
-
-### Exercise 3.1 — Build the Golden Dataset
-
-Thiết kế và validate dataset theo Mục 5–6 trong `guide_lab.md`. Nội dung 20 QA
-được điền trực tiếp trong `golden_dataset.json`; phần dưới chỉ ghi lại kết quả
-và quyết định thiết kế, không chép lại toàn bộ QA.
-
-**Kết quả dataset**
-
-| Hạng mục | Kết quả |
+| Score | Definition |
 |---|---|
-| Tổng số records | ____ / 20 |
-| Easy | ____ / 5 |
-| Medium | ____ / 7 |
-| Hard | ____ / 5 |
-| Adversarial | ____ / 3 |
-| Source documents được sử dụng | ____ / 10 |
-| Validator status | PASS / FAIL |
+| 5 | Correct, complete, actionable, safe, and explicitly grounded in relevant policy evidence. |
+| 4 | Correct and safe with a minor non-material omission or wording issue. |
+| 3 | Partly correct but misses a material condition, exception, deadline, or action. |
+| 2 | Significant policy error, unsafe guidance, or mostly irrelevant response. |
+| 1 | Hallucinated, prohibited disclosure, follows injection, or fails a required refusal. |
 
-**Ba case đại diện cho quyết định thiết kế**
+Dimensions: correctness, completeness, relevance, evidence/grounding, actionability, safety/privacy, and clarity. Score each independently from 1–5, then normalize to 0–1. The judge receives a randomized answer order, concise examples, and periodically calibrated human labels. Test edge cases include prompt injection, account-data requests, unsafe troubleshooting, date-version return policy, and out-of-scope medical requests.
 
-| ID | Difficulty | Source document(s) | Vì sao case phù hợp với difficulty/attack type? |
-|---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
+## Exercise 3.4 — Framework comparison (bonus)
 
-**Điểm khó nhất khi xây dựng expected answer hoặc evidence là gì?**
-
-> *Câu trả lời:*
-
-**Xác nhận:**
-
-- [ ] Mọi claim trong expected answer đều có evidence hỗ trợ.
-- [ ] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
-- [ ] `python validate_golden_dataset.py` báo `PASS`.
-
-### Exercise 3.2 — Benchmark Run
-
-Chạy:
-
-```bash
-python domain_assistant.py
-python evaluate_answers.py
-```
-
-Copy bảng terminal vào đây hoặc điền từ `artifacts/benchmark_results.json`.
-
-| ID | Question (short) | Ctx Recall | Ctx Precision | Faithfulness | Relevance | Completeness | Overall | Passed? | Failure Type |
-|---|---|---:|---:|---:|---:|---:|---:|---|---|
-| E01 | | | | | | | | | |
-| E02 | | | | | | | | | |
-| E03 | | | | | | | | | |
-| E04 | | | | | | | | | |
-| E05 | | | | | | | | | |
-| M01 | | | | | | | | | |
-| M02 | | | | | | | | | |
-| M03 | | | | | | | | | |
-| M04 | | | | | | | | | |
-| M05 | | | | | | | | | |
-| M06 | | | | | | | | | |
-| M07 | | | | | | | | | |
-| H01 | | | | | | | | | |
-| H02 | | | | | | | | | |
-| H03 | | | | | | | | | |
-| H04 | | | | | | | | | |
-| H05 | | | | | | | | | |
-| A01 | | | | | | | | | |
-| A02 | | | | | | | | | |
-| A03 | | | | | | | | | |
-
-**Aggregate Report**
-
-- Overall pass rate: ____%
-- Avg Context Recall: ____
-- Avg Context Precision: ____
-- Avg Faithfulness: ____
-- Avg Relevance: ____
-- Avg Completeness: ____
-- Failure type distribution: ____
-
-**Ba cases có Overall Score thấp nhất**
-
-1. ID: ____ | Score: ____ | Failure type: ____
-2. ID: ____ | Score: ____ | Failure type: ____
-3. ID: ____ | Score: ____ | Failure type: ____
-
-**Nhận xét ngắn:** Metric nào yếu nhất? Kết quả gợi ý vấn đề nằm ở retrieval
-hay generation?
-
-> *Câu trả lời:*
-
-### Exercise 3.3 — LLM-as-a-Judge Rubric Design
-
-Thiết kế rubric domain-specific cho OrbitTech Customer Support. Mỗi mức phải
-đủ cụ thể để hai người chấm độc lập có thể hiểu giống nhau.
-
-Chọn 3–5 dimensions:
-
-- [ ] Correctness
-- [ ] Completeness
-- [ ] Relevance
-- [ ] Evidence/citation
-- [ ] Actionability
-- [ ] Safety/privacy
-- [ ] Tone/clarity
-- [ ] Dimension khác: __________
-
-| Score | Tiêu chí domain-specific | Ví dụ response |
-|---:|---|---|
-| 5 | | |
-| 4 | | |
-| 3 | | |
-| 2 | | |
-| 1 | | |
-
-**Ba edge cases khó chấm**
-
-| Edge Case | Tại sao khó chấm? | Rubric xử lý thế nào? |
+| Criterion | RAGAS-style lexical core | LLM-as-a-Judge |
 |---|---|---|
-| | | |
-| | | |
-| | | |
+| Strength | Deterministic, fast, cheap, easy to regression-test | Captures semantics, safety, and nuanced policy quality |
+| Limitation | Token overlap can underrate valid paraphrases | Can be biased, costly, and non-deterministic |
+| Use here | CI smoke gate and retrieval diagnostics | Human-calibrated review of borderline/safety cases |
 
-**Bias controls:** Rubric hoặc evaluation protocol của bạn giảm position bias,
-verbosity bias và self-preference bằng cách nào?
+## Exercise 3.5 — Reranking (bonus)
 
-> *Câu trả lời:*
+Implemented `rerank_by_overlap()`, which preserves the retrieved set but orders chunks by lexical overlap with the query. This raises or preserves rank-aware context precision; production should replace it with a validated cross-encoder reranker.
 
-### Exercise 3.4 — Framework Comparison (Bonus +5)
+## Submission check
 
-Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
-và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
-
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
-|---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
-
-- Scores có nhất quán không?
-- Framework nào strict hơn và vì sao?
-- Hai framework có tìm ra cùng failure cases không?
-
-> *Phân tích:*
-
-### Exercise 3.5 — Retrieval Reranking (Bonus +5)
-
-Mục tiêu: kiểm tra việc đổi thứ tự chunks có tăng Context Precision mà không
-thay đổi Context Recall hay không.
-
-1. Chọn ít nhất 5 cases từ `artifacts/actual_answers.json`.
-2. Tính Context Recall và Context Precision trước rerank.
-3. Implement `rerank_by_overlap()` hoặc một reranker khác.
-4. Rerank cùng tập chunks, không thêm hoặc xóa chunk.
-5. Tính lại hai metrics và giải thích kết quả.
-
-| ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
-|---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
-
-**Tại sao Recall dự kiến không đổi?**
-
-> *Câu trả lời:*
-
-**Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
-
-> *Câu trả lời:*
-
----
-
-## Part 4 — Reflection (16:35–16:50)
-
-Hoàn thành `reflection.md` bằng kết quả thật từ Exercise 3.2.
-
----
-
-## Completion Checklist
-
-Hoàn thành kiểm tra cuối trong khoảng 16:50–17:00.
-
-- [ ] Tất cả required tests pass.
-- [ ] `golden_dataset.json` validate thành công.
-- [ ] Exercise 3.1 hoàn thành trong file JSON và bảng kết quả phía trên.
-- [ ] Exercise 3.2 có năm metrics, aggregate report và ba cases thấp nhất.
-- [ ] Exercise 3.3 có rubric 1–5 và bias controls.
-- [ ] `reflection.md` có ba failure analyses và regression strategy.
-- [ ] Đã copy `template.py` thành `solution/solution.py`.
-- [ ] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
+- [x] All tests pass: 42 passed.
+- [x] Golden dataset validates.
+- [x] Dataset has 20 stratified, evidence-backed records.
+- [x] Actual answers and benchmark artifacts were generated.
+- [x] Judge rubric and bias controls are documented.
+- [x] `solution/solution.py` mirrors the completed core.
+- [x] Reflection and regression strategy are documented in `reflection.md`.
